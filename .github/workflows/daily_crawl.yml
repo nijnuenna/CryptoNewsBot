@@ -2,7 +2,7 @@ name: Daily Crypto News Bot
 
 on:
   schedule:
-      - cron: '30 22 * * 0-4'
+      - cron: '40 22 * * 0-4'
     
   workflow_dispatch: # 이 줄이 있어야 'Run workflow' 버튼이 생깁니다.
 

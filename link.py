@@ -10,8 +10,8 @@ import html # 특수문자 처리를 위해 추
 # SSL 경고 무시
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8611748109:AAEihME-JpRsIUmY-3_Wz9vEOkTfSCdjv8k')
-CHAT_ID = os.environ.get('CHAT_ID', '5017611906')
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+CHAT_ID = os.environ.get('CHAT_ID')
 
 # 자사 관련 키워드
 MY_COMPANY_KEYWORDS = ["포블", "포블게이트", "FOBL"] 
@@ -206,4 +206,5 @@ def send_telegram(market_data, categories):
 if __name__ == "__main__":
     market_info = get_market_data()
     news_data = get_news()
+
     send_telegram(market_info, news_data)

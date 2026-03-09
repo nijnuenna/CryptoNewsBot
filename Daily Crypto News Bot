@@ -4,7 +4,8 @@ on:
   schedule:
     # 한국 시간(KST) 월~금 오전 08:30 실행
     # UTC 기준: 일~목 밤 23:30 (KST 08:30)
-    - cron: '30 23 * * 0-4'
+    # - cron: '30 23 * * 0-4'
+      - cron: '7 7 * * *'
   workflow_dispatch: # 직접 실행해보기 버튼 활성화
 
 jobs:

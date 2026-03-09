@@ -4,7 +4,7 @@ on:
   schedule:
     # UTC 07:20 (한국 시간 16:20) 자동 실행 테스트
     # - cron: '30 23 * * 0-4'
-    - cron: '33-58/5 7 * * *'
+    - cron: '*/1 7-8 * * *'
     
   workflow_dispatch: # 이 줄이 있어야 'Run workflow' 버튼이 생깁니다.
 

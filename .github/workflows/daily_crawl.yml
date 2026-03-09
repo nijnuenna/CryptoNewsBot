@@ -2,11 +2,11 @@ name: Daily Crypto News Bot
 
 on:
   schedule:
-    # 한국 시간(KST) 월~금 오전 08:30 실행
-    # UTC 기준: 일~목 밤 23:30 (KST 08:30)
+    # UTC 07:20 (한국 시간 16:20) 자동 실행 테스트
     # - cron: '30 23 * * 0-4'
-      - cron: '12 7 * * *'
-  workflow_dispatch: # 직접 실행해보기 버튼 활성화
+    - cron: '20 7 * * *'
+    
+  workflow_dispatch: # 이 줄이 있어야 'Run workflow' 버튼이 생깁니다.
 
 jobs:
   run-bot:
@@ -25,7 +25,6 @@ jobs:
 
       - name: Run script
         env:
-          # 금고(Secrets)에 저장한 값을 환경 변수로 불러옵니다.
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python news.py

@@ -16,9 +16,9 @@ from urllib.parse import urlparse, quote
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 환경 변수 설정
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-CHAT_ID = os.environ.get('CHAT_ID')
-CMC_API_KEY = os.environ.get('CMC_API_KEY')
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8611748109:AAEihME-JpRsIUmY-3_Wz9vEOkTfSCdjv8k')
+CHAT_ID = os.environ.get('CHAT_ID', '5017611906')
+CMC_API_KEY = os.environ.get('CMC_API_KEY',"3ebd2f754fba44cda22cc4c88990e04f")
 
 # 키워드 및 요일 설정
 MY_COMPANY_KEYWORDS = ["포블", "포블게이트", "FOBL"] 
@@ -262,8 +262,13 @@ def get_news():
                 # 구글 링크 -> 원본 링크 변환
                 original_url = get_original_url(item.link.text)
                 
-                title = html.escape(title_raw)
-                source = html.escape(item.source.text) if item.source else "뉴스"
+                source_raw = item.source.text if item.source else "뉴스"
+                # 제목 끝에 " - 매체명"이 붙어있으면 제거 (RSS 특성상 중복)
+                clean_title = title_raw
+                if clean_title.endswith(f" - {source_raw}"):
+                    clean_title = clean_title[: -len(f" - {source_raw}")]
+                title = html.escape(clean_title)
+                source = html.escape(source_raw)
                 
                 # 제목 아래에 URL 배치 포맷
                 formatted_item = f"▲ {title} - {source} ({article_time_str})\n{original_url}"
@@ -313,5 +318,4 @@ def send_telegram(market_data, categories):
         }, verify=False)
 
 if __name__ == "__main__":
-
     send_telegram(get_market_data(), get_news())

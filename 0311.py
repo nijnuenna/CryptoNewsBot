@@ -16,9 +16,9 @@ from urllib.parse import urlparse, quote
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 환경 변수 설정
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8611748109:AAEihME-JpRsIUmY-3_Wz9vEOkTfSCdjv8k')
-CHAT_ID = os.environ.get('CHAT_ID', '5017611906')
-CMC_API_KEY = os.environ.get('CMC_API_KEY',"3ebd2f754fba44cda22cc4c88990e04f")
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+CHAT_ID = os.environ.get('CHAT_ID')
+CMC_API_KEY = os.environ.get('CMC_API_KEY')
 
 # 키워드 및 요일 설정
 MY_COMPANY_KEYWORDS = ["포블", "포블게이트", "FOBL"] 
@@ -313,4 +313,5 @@ def send_telegram(market_data, categories):
         }, verify=False)
 
 if __name__ == "__main__":
+
     send_telegram(get_market_data(), get_news())

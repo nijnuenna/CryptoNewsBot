@@ -25,4 +25,5 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          CMC_API_KEY: ${{ secrets.CMC_API_KEY }}
         run: python 0311.py

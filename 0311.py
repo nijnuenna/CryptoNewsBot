@@ -110,7 +110,14 @@ def is_duplicate(title, seen_title_sets):
     new_words = clean_text(title)
     if not new_words: return False
     for seen_words in seen_title_sets:
-        if len(new_words & seen_words) / len(new_words) >= 0.4: return True
+        if not seen_words: continue
+        overlap = len(new_words & seen_words)
+        ratio_a = overlap / len(new_words)
+        ratio_b = overlap / len(seen_words)
+        # 조건 1: 양방향 유사도 25% 이상
+        if max(ratio_a, ratio_b) >= 0.25: return True
+        # 조건 2: 겹치는 핵심 단어가 3개 이상이면 무조건 중복
+        if overlap >= 2: return True
     return False
 
 def format_pub_date_only(pub_date_str):
@@ -274,7 +281,7 @@ def get_news():
     
     search_map = [
         ("자사", MY_COMPANY_KEYWORDS, "자사 기사", False, 1),
-        ("가상자산", ["스테이블코인", "STO", "토큰증권","업비트","빗썸","코인원","코빗","고팍스", "가상자산", "디지털 자산",
+        ("가상자산", ["스테이블코인", "STO", "토큰증권", "가상자산", "디지털 자산",
         "디지털자산법", "코인거래소", "가상자산 규제", "커스터디", "암호화폐","비트코인", "비트코인 현물 ETF", "비트코인 채굴"], "업계 전반", True, 20),
         ("파트너사 기사", ["트래블룰 코드","트래블룰 CODE","트래블룰 기업 코드","쟁글","'쟁글'","체이널리시스","람다256","'람다256'","DAXA","한국핀테크산업협회","핀산협"], "파트너사 기사", True, 5)
     ]
@@ -293,6 +300,10 @@ def get_news():
                 
                 title_raw = item.title.text
                 if is_duplicate(title_raw, global_seen_sets): continue
+
+                EXCLUDE_KEYWORDS = ["업비트","두나무","빗썸","빗썸나눔", "코인원", "코빗","고팍스","스트리미"]
+                if any(kw in title_raw for kw in EXCLUDE_KEYWORDS):
+                    continue
                 
                 article_time_str, dt_kst = format_pub_date_only(item.pubDate.text if item.pubDate else "")
                 if cat_name == "업계 전반" and dt_kst:

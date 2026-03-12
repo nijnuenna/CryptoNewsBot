@@ -16,9 +16,9 @@ from urllib.parse import urlparse, quote
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 환경 변수 설정
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8611748109:AAEihME-JpRsIUmY-3_Wz9vEOkTfSCdjv8k')
-CHAT_ID = os.environ.get('CHAT_ID', '5017611906')
-CMC_API_KEY = os.environ.get('CMC_API_KEY',"3ebd2f754fba44cda22cc4c88990e04f")
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+CHAT_ID = os.environ.get('CHAT_ID')
+CMC_API_KEY = os.environ.get('CMC_API_KEY')
 
 # 키워드 및 요일 설정
 MY_COMPANY_KEYWORDS = ["포블", "포블게이트", "FOBL"] 
@@ -33,6 +33,45 @@ def get_korean_date():
     tz = pytz.timezone('Asia/Seoul')
     now = datetime.now(tz)
     return f"{now.month}/{now.day}({DAYS_KR[now.weekday()]})"
+
+def get_daily_quote():
+    """한국어 명언 API에서 랜덤 명언 추출"""
+    # API 1: korean-advice-open-api
+    try:
+        resp = requests.get(
+            "https://korean-advice-open-api.vercel.app/api/advice",
+            timeout=10,
+            verify=False
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        message = data.get("message", "")
+        author = data.get("author", "")
+        profile = data.get("authorProfile", "")
+        if message and author:
+            if profile:
+                return f'"{message}" - {author} ({profile})'
+            return f'"{message}" - {author}'
+    except Exception:
+        pass
+    
+    # API 2: sobabear (fallback)
+    try:
+        resp = requests.get(
+            "https://api.sobabear.com/happiness/random-quote",
+            timeout=10
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        quote_data = data.get("data", {})
+        content = quote_data.get("content", "")
+        author = quote_data.get("author", "")
+        if content and author:
+            return f'"{content}" - {author}'
+    except Exception:
+        pass
+    
+    return "추출 실패"
 
 def get_market_data():
     """BTC, ETH 가격 및 코인마켓캡 실제 업데이트 시각 통합"""
@@ -58,12 +97,13 @@ def get_market_data():
             eth_usd = f"{round(res_u['data']['ETH']['quote']['USD']['price'] / 1000, 1)}K"
     except Exception: pass
 
+    quote_text = get_daily_quote()
+
     return (
         f"📊 <b>오늘의 가격 : 코인마켓캡 {fetch_time} 기준</b>\n"
         f"🟡 비트코인: ₩{btc_krw} ({btc_usd})\n"
-        f"⚪ 이더리움: ₩{eth_krw} ({eth_usd})\n\n"
-        f"📚 자사 기사 ➡️ 파트너사 기사 ➡️ 업계 전반\n"
-        f"----------------------------\n\n"
+        f"⚪ 이더리움: ₩{eth_krw} ({eth_usd})\n"
+        f"💬 오늘의 명언 : {quote_text}\n\n"
     )
 
 def is_duplicate(title, seen_title_sets):
@@ -319,4 +359,3 @@ def send_telegram(market_data, categories):
 
 if __name__ == "__main__":
     send_telegram(get_market_data(), get_news())
-

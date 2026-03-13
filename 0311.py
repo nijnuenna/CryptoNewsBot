@@ -24,6 +24,47 @@ CMC_API_KEY = os.environ.get('CMC_API_KEY')
 MY_COMPANY_KEYWORDS = ["포블", "포블게이트", "FOBL"] 
 DAYS_KR = ['월', '화', '수', '목', '금', '토', '일']
 
+# ============================================================
+# 매체 품질 관리
+# ============================================================
+
+# 1순위: 주요 경제/금융 매체 (업계 관계자가 신뢰하는 매체)
+TIER1_SOURCES = [
+    "연합뉴스", "연합인포맥스", "한국경제", "매일경제", "서울경제", "머니투데이",
+    "이데일리", "파이낸셜뉴스", "헤럴드경제", "아시아경제", "뉴스1", "뉴시스",
+    "조선비즈", "중앙일보", "조선일보", "동아일보", "한겨레", "경향신문",
+    "KBS", "MBC", "SBS", "JTBC", "YTN", "채널A",
+    "블룸버그", "로이터", "Reuters", "Bloomberg",
+]
+
+# 2순위: IT/블록체인 전문 매체
+TIER2_SOURCES = [
+    "코인데스크", "코인텔레그래프", "블록미디어", "디지털애셋", "토큰포스트",
+    "디지털투데이", "지디넷코리아", "ZDNet", "전자신문", "디지털타임스",
+    "테크M", "바이라인네트워크", "IT조선", "더블록", "The Block",
+    "비인크립토", "코인니스", "데일리블록체인",
+    "딜사이트", "비즈니스포스트", "뉴스토마토", "이코노미스트",
+    "한국블록체인뉴스", "블록체인투데이", "디센터",
+]
+
+# 제외: 포털 재배포, 블로그형, 저품질 매체
+EXCLUDED_SOURCES = [
+    "v.daum.net", "blog.naver", "tistory", "brunch",
+    "post.naver", "youtube.com", "n.news.naver",
+]
+
+# 저품질 기사 제목 패턴 (단순 시세 나열, 광고성, 낚시성)
+LOW_QUALITY_PATTERNS = [
+    r"^비트코인\s*\d+만\s*원",           # "비트코인 1억210만 원대 하락" 같은 단순 시세
+    r"오늘\s*시세",                        # "비트코인 오늘 시세"
+    r"^\[속보\]",                          # 속보 태그 (보통 한줄짜리)
+    r"^(코인|가상자산)\s*시세",
+    r"실시간\s*(시세|가격)",
+    r"^\[광고\]",
+    r"^\[후원\]",
+]
+
+
 def clean_text(text):
     text = re.sub(r'\[.*?\]|\(.*?\)', '', text)
     text = re.sub(r'[^가-힣a-zA-Z0-9\s]', ' ', text)
@@ -36,7 +77,6 @@ def get_korean_date():
 
 def get_daily_quote():
     """한국어 명언 API에서 랜덤 명언 추출"""
-    # API 1: korean-advice-open-api
     try:
         resp = requests.get(
             "https://korean-advice-open-api.vercel.app/api/advice",
@@ -55,11 +95,11 @@ def get_daily_quote():
     except Exception:
         pass
     
-    # API 2: sobabear (fallback)
     try:
         resp = requests.get(
             "https://api.sobabear.com/happiness/random-quote",
-            timeout=10
+            timeout=10,
+            verify=False
         )
         resp.raise_for_status()
         data = resp.json()
@@ -114,10 +154,32 @@ def is_duplicate(title, seen_title_sets):
         overlap = len(new_words & seen_words)
         ratio_a = overlap / len(new_words)
         ratio_b = overlap / len(seen_words)
-        # 조건 1: 양방향 유사도 25% 이상
         if max(ratio_a, ratio_b) >= 0.25: return True
-        # 조건 2: 겹치는 핵심 단어가 3개 이상이면 무조건 중복
         if overlap >= 2: return True
+    return False
+
+def is_low_quality_title(title):
+    """저품질 기사 제목 패턴 필터"""
+    for pattern in LOW_QUALITY_PATTERNS:
+        if re.search(pattern, title):
+            return True
+    return False
+
+def get_source_tier(source_name):
+    """매체 등급 반환: 1(주요) > 2(전문) > 3(기타)"""
+    for name in TIER1_SOURCES:
+        if name in source_name or source_name in name:
+            return 1
+    for name in TIER2_SOURCES:
+        if name in source_name or source_name in name:
+            return 2
+    return 3
+
+def is_excluded_source(source_name, article_url):
+    """제외 대상 매체/URL 체크"""
+    for excluded in EXCLUDED_SOURCES:
+        if excluded in source_name or excluded in article_url:
+            return True
     return False
 
 def format_pub_date_only(pub_date_str):
@@ -134,29 +196,18 @@ def format_pub_date_only(pub_date_str):
 # ============================================================
 
 def _decode_base64_url(article_id):
-    """
-    구형 Google News URL: base64 내부에 원본 URL이 직접 인코딩된 경우.
-    CBMi... 로 시작하고 디코딩하면 http로 시작하는 URL이 보이는 케이스.
-    """
     try:
         padded = article_id + '=' * (4 - len(article_id) % 4) if len(article_id) % 4 else article_id
         decoded = base64.urlsafe_b64decode(padded)
-        
-        # prefix bytes 제거 (보통 0x08, 0x13, 0x22)
         prefix = bytes([0x08, 0x13, 0x22])
         if decoded.startswith(prefix):
             decoded = decoded[len(prefix):]
-        
-        # 첫 바이트가 길이 정보
         length = decoded[0]
         if length >= 0x80:
             url_bytes = decoded[2:length+2]
         else:
             url_bytes = decoded[1:length+1]
-        
         url_str = url_bytes.decode('utf-8', errors='ignore')
-        
-        # 유효한 URL인지 확인 (http로 시작해야 함)
         if url_str.startswith('http'):
             return url_str
     except Exception:
@@ -164,17 +215,10 @@ def _decode_base64_url(article_id):
     return None
 
 def _decode_via_batchexecute(article_id):
-    """
-    신형 Google News URL: AU_yqL... 로 시작하여 batchexecute API 호출이 필요한 경우.
-    1단계: news.google.com/articles/{id} 페이지에서 signature, timestamp 추출
-    2단계: batchexecute API로 원본 URL 디코딩
-    """
     headers_common = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
                        '(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
     }
-    
-    # 1단계: signature, timestamp 가져오기
     signature, timestamp = None, None
     for url_template in [
         f"https://news.google.com/articles/{article_id}",
@@ -184,8 +228,6 @@ def _decode_via_batchexecute(article_id):
             resp = requests.get(url_template, headers=headers_common, timeout=15, verify=False)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # c-wiz > div 에서 data-n-a-sg, data-n-a-ts 추출
             div = soup.select_one('c-wiz > div[data-n-a-sg]')
             if div:
                 signature = div.get('data-n-a-sg')
@@ -193,22 +235,17 @@ def _decode_via_batchexecute(article_id):
                 break
         except Exception:
             continue
-    
     if not signature or not timestamp:
         return None
-    
-    # 2단계: batchexecute API 호출
     try:
         payload = [
             "Fbv4je",
             f'["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,null,null,null,0,1],"X","X",1,[1,1,1],1,1,null,0,0,null,0],"{article_id}",{timestamp},"{signature}"]',
         ]
-        
         req_headers = {
             'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
             'User-Agent': headers_common['User-Agent'],
         }
-        
         resp = requests.post(
             'https://news.google.com/_/DotsSplashUi/data/batchexecute',
             headers=req_headers,
@@ -217,65 +254,44 @@ def _decode_via_batchexecute(article_id):
             verify=False,
         )
         resp.raise_for_status()
-        
-        # 응답 파싱: 두 번째 빈 줄 이후의 JSON에서 URL 추출
         parsed = json.loads(resp.text.split('\n\n')[1])[:-2]
         decoded_url = json.loads(parsed[0][2])[1]
-        
         if decoded_url and decoded_url.startswith('http'):
             return decoded_url
     except Exception:
         pass
-    
     return None
 
 def get_original_url(google_url):
-    """
-    Google News 링크 → 원본 기사 URL 변환.
-    1) base64 직접 디코딩 시도 (구형 URL)
-    2) 실패 시 batchexecute API 호출 (신형 URL)
-    3) 모두 실패 시 원래 URL 반환
-    """
     try:
         parsed = urlparse(google_url)
         if parsed.hostname != 'news.google.com':
             return google_url
-        
         path_parts = parsed.path.split('/')
-        # /rss/articles/XXXX 또는 /articles/XXXX 형태에서 article_id 추출
         article_id = None
         for i, part in enumerate(path_parts):
             if part in ('articles', 'read') and i + 1 < len(path_parts):
                 article_id = path_parts[i + 1]
                 break
-        
         if not article_id:
             return google_url
-        
-        # query string 제거 (예: ?oc=5)
         if '?' in article_id:
             article_id = article_id.split('?')[0]
-        
-        # 방법 1: base64 직접 디코딩 (구형)
         direct_url = _decode_base64_url(article_id)
         if direct_url:
             return direct_url
-        
-        # 방법 2: batchexecute API (신형 - AU_yqL 등)
         api_url = _decode_via_batchexecute(article_id)
         if api_url:
             return api_url
-        
     except Exception:
         pass
-    
     return google_url
 
 
 # ============================================================
 
 def get_news():
-    """뉴스 수집"""
+    """뉴스 수집 — 매체 품질 필터링 및 등급별 정렬 적용"""
     categories = {"자사 기사": [], "업계 전반": [], "파트너사 기사": []}
     global_seen_sets = []
     
@@ -283,55 +299,120 @@ def get_news():
         ("자사", MY_COMPANY_KEYWORDS, "자사 기사", False, 1),
         ("가상자산", ["스테이블코인", "STO", "토큰증권", "가상자산", "디지털 자산",
         "디지털자산법", "코인거래소", "가상자산 규제", "커스터디", "암호화폐","비트코인", "비트코인 현물 ETF", "비트코인 채굴"], "업계 전반", True, 20),
-        ("파트너사 기사", ["트래블룰 코드","트래블룰 CODE","트래블룰 기업 코드","쟁글","'쟁글'","체이널리시스","람다256","'람다256'","DAXA","한국핀테크산업협회","핀산협"], "파트너사 기사", True, 5)
     ]
+
+    # 파트너사: 회사별 검색 키워드 (각 회사당 최신 1개씩)
+    PARTNER_MAP = [
+        ("트래블룰 코드", ["트래블룰 솔루션 코드", "트래블룰 솔루션 CODE", "트래블룰 솔루션사 코드"]),
+        ("쟁글", ["쟁글"]),
+        ("체이널리시스", ["체이널리시스","chainalysis"]),
+        ("람다256", ["람다256"]),
+        ("DAXA", ["닥사", "DAXA"]),
+        ("한국핀테크산업협회", ["한국핀테크산업협회", "핀산협"]),
+    ]
+
+    EXCLUDE_KEYWORDS = ["업비트","두나무","빗썸","빗썸나눔","코인원","코빗","고팍스","스트리미"]
 
     for label, keywords, cat_name, is_24h, limit in search_map:
         query = " OR ".join(f'"{kw}"' for kw in keywords)
         url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
         if is_24h: url += "+when:1d"
         
+        # 후보 기사를 먼저 모은 뒤, 등급순 정렬 후 limit개 선별
+        candidates = []
+        
         try:
             res = requests.get(url, verify=False, timeout=15)
             items = BeautifulSoup(res.content, 'xml').find_all('item')
-            count = 0
+            
             for item in items:
-                if count >= limit: break
-                
                 title_raw = item.title.text
+                source_raw = item.source.text if item.source else "뉴스"
+                
+                # 1. 중복 체크
                 if is_duplicate(title_raw, global_seen_sets): continue
 
-                EXCLUDE_KEYWORDS = ["업비트","두나무","빗썸","빗썸나눔", "코인원", "코빗","고팍스","스트리미"]
-                if any(kw in title_raw for kw in EXCLUDE_KEYWORDS):
-                    continue
+                # 2. 제외 키워드 (타 거래소)
+                if any(kw in title_raw for kw in EXCLUDE_KEYWORDS): continue
                 
+                # 3. 저품질 제목 필터 (업계 전반만)
+                if cat_name == "업계 전반" and is_low_quality_title(title_raw): continue
+
+                # 4. 시간 필터
                 article_time_str, dt_kst = format_pub_date_only(item.pubDate.text if item.pubDate else "")
                 if cat_name == "업계 전반" and dt_kst:
                     if (datetime.now(pytz.timezone('Asia/Seoul')) - dt_kst).total_seconds() > 172800:
                         continue
 
-                # 구글 링크 -> 원본 링크 변환
+                # 5. 원본 URL 추출
                 original_url = get_original_url(item.link.text)
+
+                # 6. 제외 매체/URL 필터 (업계 전반만)
+                if cat_name == "업계 전반" and is_excluded_source(source_raw, original_url): continue
                 
-                source_raw = item.source.text if item.source else "뉴스"
-                # 제목 끝에 " - 매체명"이 붙어있으면 제거 (RSS 특성상 중복)
+                # 7. 매체 등급 판정 (업계 전반만 등급 적용, 나머지는 동일 등급)
+                tier = get_source_tier(source_raw) if cat_name == "업계 전반" else 0
+                
+                # 제목 정리
                 clean_title = title_raw
                 if clean_title.endswith(f" - {source_raw}"):
                     clean_title = clean_title[: -len(f" - {source_raw}")]
                 title = html.escape(clean_title)
                 source = html.escape(source_raw)
                 
-                # 제목 아래에 URL 배치 포맷
                 formatted_item = f"▲ {title} - {source} ({article_time_str})\n{original_url}"
-                categories[cat_name].append(formatted_item)
+                candidates.append((tier, formatted_item))
                 
                 global_seen_sets.append(clean_text(title_raw))
-                count += 1
                 
-                # Google 429 방지를 위한 짧은 딜레이
                 time.sleep(0.3)
         except Exception: pass
         
+        # 등급순 정렬 (1순위 매체 먼저) 후 limit개 선별
+        candidates.sort(key=lambda x: x[0])
+        for _, formatted_item in candidates[:limit]:
+            categories[cat_name].append(formatted_item)
+    
+    # ============================================================
+    # 파트너사 기사: 회사별 최신 1개씩 개별 검색
+    # ============================================================
+    for partner_name, partner_keywords in PARTNER_MAP:
+        query = " OR ".join(f'"{kw}"' for kw in partner_keywords)
+        url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
+        
+        found = False
+        try:
+            res = requests.get(url, verify=False, timeout=15)
+            items = BeautifulSoup(res.content, 'xml').find_all('item')
+            
+            for item in items:
+                if found: break
+                
+                title_raw = item.title.text
+                
+                article_time_str, dt_kst = format_pub_date_only(item.pubDate.text if item.pubDate else "")
+                original_url = get_original_url(item.link.text)
+                
+                source_raw = item.source.text if item.source else "뉴스"
+                clean_title = title_raw
+                if clean_title.endswith(f" - {source_raw}"):
+                    clean_title = clean_title[: -len(f" - {source_raw}")]
+                title = html.escape(clean_title)
+                source = html.escape(source_raw)
+                
+                formatted_item = f"▲ {title} - {source} ({article_time_str})\n{original_url}"
+                categories["파트너사 기사"].append(formatted_item)
+                
+                global_seen_sets.append(clean_text(title_raw))
+                found = True
+                
+                time.sleep(0.3)
+        except Exception: pass
+        
+        # 검색 결과가 없어도 무조건 1줄 출력
+        if not found:
+            categories["파트너사 기사"].append(f"▲ {partner_name} - 최신 기사 없음")
+
     return categories
 
 def send_telegram(market_data, categories):

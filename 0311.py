@@ -1,172 +1,248 @@
 import requests
-from bs4 import BeautifulSoup
 import os
 import urllib3
 from datetime import datetime
 import pytz
-from collections import Counter
-import html
+import html as html_module
 import re
-import base64
 import json
 import time
-from urllib.parse import urlparse, quote
+from dotenv import load_dotenv
 
 # SSL 경고 무시
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 환경 변수 설정
+# ============================================================
+# 환경변수
+# ============================================================
+load_dotenv()
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
 CMC_API_KEY = os.environ.get('CMC_API_KEY')
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
+NAVER_CLIENT_ID = os.environ.get('NAVER_CLIENT_ID')
+NAVER_CLIENT_SECRET = os.environ.get('NAVER_CLIENT_SECRET')
 
-# 키워드 및 요일 설정
-MY_COMPANY_KEYWORDS = ["포블", "포블게이트", "FOBL"] 
 DAYS_KR = ['월', '화', '수', '목', '금', '토', '일']
 
 # ============================================================
-# 매체 품질 관리
+# 키워드 / 필터 설정
 # ============================================================
 
-# 1순위: 주요 경제/금융 매체 (업계 관계자가 신뢰하는 매체)
-TIER1_SOURCES = [
-    "연합뉴스", "연합인포맥스", "한국경제", "매일경제", "서울경제", "머니투데이",
-    "이데일리", "파이낸셜뉴스", "헤럴드경제", "아시아경제", "뉴스1", "뉴시스",
-    "조선비즈", "중앙일보", "조선일보", "동아일보", "한겨레", "경향신문",
-    "KBS", "MBC", "SBS", "JTBC", "YTN", "채널A",
-    "블룸버그", "로이터", "Reuters", "Bloomberg",
+MY_COMPANY_KEYWORDS = ["포블게이트", "포블", "FOBL"]
+
+# 제목에 포함되면 수집 단계에서 제외
+EXCLUDE_TITLE_KEYWORDS = [
+    # 타 거래소
+    "업비트", "두나무", "빗썸", "코인원", "코빗", "고팍스", "스트리미",
+    # 범죄/부정
+    "보이스피싱", "피싱", "사기", "해킹", "랜섬웨어", "자금세탁",
+    "범죄", "검거", "구속", "피해자", "피해액", "폰지", "먹튀",
+    # 블록체인 무관
+    "시니어", "리빙", "요양", "아파트", "분양", "부동산", "재건축",
+    "골프", "야구", "축구", "농구", "배구",
+    "드라마", "영화", "연예", "아이돌", "게임",
+    # 특정 자산
+    "리플","XRP",
 ]
 
-# 2순위: IT/블록체인 전문 매체
-TIER2_SOURCES = [
-    "코인데스크", "코인텔레그래프", "블록미디어", "디지털애셋", "토큰포스트",
-    "디지털투데이", "지디넷코리아", "ZDNet", "전자신문", "디지털타임스",
-    "테크M", "바이라인네트워크", "IT조선", "더블록", "The Block",
-    "비인크립토", "코인니스", "데일리블록체인",
-    "딜사이트", "비즈니스포스트", "뉴스토마토", "이코노미스트",
-    "한국블록체인뉴스", "블록체인투데이", "디센터",
-]
-
-# 제외: 포털 재배포, 블로그형, 저품질 매체
-EXCLUDED_SOURCES = [
-    "v.daum.net", "blog.naver", "tistory", "brunch",
-    "post.naver", "youtube.com", "n.news.naver",
-]
-
-# 저품질 기사 제목 패턴 (단순 시세 나열, 광고성, 낚시성)
+# 저품질 기사 제목 패턴
 LOW_QUALITY_PATTERNS = [
-    r"^비트코인\s*\d+만\s*원",           # "비트코인 1억210만 원대 하락" 같은 단순 시세
-    r"오늘\s*시세",                        # "비트코인 오늘 시세"
-    r"^\[속보\]",                          # 속보 태그 (보통 한줄짜리)
+    r"^비트코인\s*\d+만\s*원",
+    r"오늘\s*시세",
+    r"^\[속보\]",
     r"^(코인|가상자산)\s*시세",
     r"실시간\s*(시세|가격)",
     r"^\[광고\]",
     r"^\[후원\]",
+    r"시드\s*라운드",
+    r"시리즈\s*[A-D]",
+    r"프리\s*시리즈",
 ]
 
+# 제외 도메인
+EXCLUDED_DOMAINS = [
+    "contents.premium.naver.com",
+]
+
+# 매체 등급
+TIER1_SOURCES = [
+    "연합뉴스", "한국경제", "매일경제", "서울경제", "머니투데이",
+    "이데일리", "파이낸셜뉴스", "헤럴드경제", "아시아경제", "뉴스1", "뉴시스",
+    "조선비즈", "중앙일보", "조선일보", "동아일보", "한겨레", "경향신문",
+    "KBS", "MBC", "SBS", "JTBC", "YTN", "채널A",
+]
+
+TIER2_SOURCES = [
+    "코인데스크", "코인데스크코리아", "블록미디어", "토큰포스트",
+    "디지털투데이", "지디넷코리아", "전자신문", "디지털타임스",
+    "더블록미디어", "비인크립토", "코인니스", "디센터",
+    "코인리더스", "블루밍비트", "뉴스토마토", "딜사이트",
+]
+
+# 토픽 분류 키워드 (순서 = 출력 순서)
+TOPIC_MAP = [
+    ("정책·규제", ["규제", "법안", "통과", "국회", "금융위", "금감원", "금융당국", "가이드라인",
+                  "제도", "입법", "법률", "시행령", "감독", "인가", "허가", "디지털자산기본법"]),
+    ("스테이블코인", ["스테이블코인", "스테이블", "USDT", "USDC", "원화코인", "원화스테이블", "달러코인"]),
+    ("STO·토큰증권", ["STO", "토큰증권", "증권형토큰", "조각투자", "토큰화", "RWA"]),
+    ("비트코인·시장", ["비트코인", "이더리움", "ETF", "강세", "약세", "급등", "급락",
+                     "상승", "하락", "반등", "매수", "매도", "채굴", "반감기"]),
+    ("디지털자산", ["디지털자산", "디지털 자산", "가상자산", "암호화폐", "커스터디", "VASP"]),
+    ("글로벌", ["미국", "SEC", "CFTC", "EU", "영국", "일본", "중국", "홍콩",
+              "월가", "글로벌", "해외", "유럽", "트럼프"]),
+    ("기업·산업", ["MOU", "협약", "파트너십", "투자", "인수", "상장", "IPO", "협업",
+                 "서비스", "출시", "론칭"]),
+]
+
+# 기업명 — 같은 기업 기사 최대 1개 제한용
+COMPANY_NAMES = [
+    "하나금융", "신한금융", "신한은행", "KB금융", "KB국민", "우리금융", "우리은행",
+    "NH농협", "카카오", "네이버", "삼성", "SK", "LG", "현대", "롯데",
+    # "바이낸스", "코인베이스", "블랙록", "마이크로스트래티지", "스트래티지",
+    # "리플", "테더", "서클", "비자", "마스터카드",
+]
+
+# 파트너사
+PARTNER_MAP = [
+    ("트래블룰 코드", ["트래블룰 솔루션 코드", "트래블룰 솔루션 CODE", "트래블룰 솔루션사 코드"]),
+    ("쟁글", ["쟁글", "Xangle"]),
+    ("체이널리시스", ["체이널리시스", "Chainalysis"]),
+    ("람다256", ["람다256", "루니버스"]),
+    ("DAXA", ["닥사", "DAXA", "디지털자산거래소공동협의체"]),
+    ("한국핀테크산업협회", ["한국핀테크산업협회", "핀산협"]),
+]
+
+# ============================================================
+# 네이버 뉴스 검색 API
+# ============================================================
+
+DOMAIN_MAP = {
+    "yna.co.kr": "연합뉴스", "yonhapnews.co.kr": "연합뉴스",
+    "hankyung.com": "한국경제", "mk.co.kr": "매일경제",
+    "sedaily.com": "서울경제", "mt.co.kr": "머니투데이",
+    "edaily.co.kr": "이데일리", "fnnews.com": "파이낸셜뉴스",
+    "heraldcorp.com": "헤럴드경제", "asiae.co.kr": "아시아경제",
+    "news1.kr": "뉴스1", "newsis.com": "뉴시스",
+    "biz.chosun.com": "조선비즈", "joongang.co.kr": "중앙일보",
+    "chosun.com": "조선일보", "donga.com": "동아일보",
+    "hani.co.kr": "한겨레", "khan.co.kr": "경향신문",
+    "kbs.co.kr": "KBS", "imbc.com": "MBC",
+    "sbs.co.kr": "SBS", "jtbc.co.kr": "JTBC",
+    "ytn.co.kr": "YTN", "ichannela.com": "채널A",
+    "coindesk.com": "코인데스크", "coindeskkorea.com": "코인데스크코리아",
+    "blockmedia.co.kr": "블록미디어", "tokenpost.kr": "토큰포스트",
+    "digitaltoday.co.kr": "디지털투데이", "zdnet.co.kr": "지디넷코리아",
+    "etnews.com": "전자신문", "dt.co.kr": "디지털타임스",
+    "theblockmedia.com": "더블록미디어", "beinews.net": "비인크립토",
+    "coinnews.co.kr": "코인니스", "decenter.kr": "디센터",
+    "bloomingbit.io": "블루밍비트", "newstomato.com": "뉴스토마토",
+    "dealsite.co.kr": "딜사이트", "businesspost.co.kr": "비즈니스포스트",
+    "coinreaders.com": "코인리더스",
+}
+
+
+def search_naver_news(query, display=100, sort="date"):
+    if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
+        return []
+
+    url = "https://openapi.naver.com/v1/search/news.json"
+    headers = {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID.strip(),
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET.strip(),
+    }
+    params = {"query": query, "display": display, "start": 1, "sort": sort}
+
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=15, verify=False)
+        resp.raise_for_status()
+        data = resp.json()
+
+        results = []
+        for item in data.get("items", []):
+            title_clean = re.sub(r'<.*?>', '', item.get("title", ""))
+            title_clean = html_module.unescape(title_clean)
+
+            original_url = item.get("originallink", "").strip()
+            if not original_url:
+                original_url = item.get("link", "").strip()
+
+            if any(d in original_url for d in EXCLUDED_DOMAINS):
+                continue
+
+            time_str, dt_kst = _parse_naver_date(item.get("pubDate", ""))
+            source = _extract_source(original_url)
+
+            results.append({
+                "title_raw": title_clean,
+                "original_url": original_url,
+                "source_raw": source,
+                "time_str": time_str,
+                "dt_kst": dt_kst,
+            })
+        return results
+    except Exception as e:
+        print(f"[ERROR] 네이버 검색 실패 ({query}): {e}")
+        return []
+
+
+def _parse_naver_date(pub_date_str):
+    try:
+        dt = datetime.strptime(pub_date_str, '%a, %d %b %Y %H:%M:%S %z')
+        dt_kst = dt.astimezone(pytz.timezone('Asia/Seoul'))
+        return dt_kst.strftime(f'%m/%d({DAYS_KR[dt_kst.weekday()]}) %H:%M'), dt_kst
+    except Exception:
+        return "시간 확인 불가", None
+
+
+def _extract_source(url):
+    try:
+        from urllib.parse import urlparse
+        domain = urlparse(url).hostname or ""
+        domain = domain.replace("www.", "").replace("m.", "")
+        for key, name in DOMAIN_MAP.items():
+            if key in domain:
+                return name
+        parts = domain.split(".")
+        if len(parts) >= 2:
+            return parts[-2]
+    except Exception:
+        pass
+    return "뉴스"
+
+
+# ============================================================
+# 코드 기반 필터링 함수
+# ============================================================
 
 def clean_text(text):
     text = re.sub(r'\[.*?\]|\(.*?\)', '', text)
     text = re.sub(r'[^가-힣a-zA-Z0-9\s]', ' ', text)
     return set([w for w in text.split() if len(w) >= 2])
 
-def get_korean_date():
-    tz = pytz.timezone('Asia/Seoul')
-    now = datetime.now(tz)
-    return f"{now.month}/{now.day}({DAYS_KR[now.weekday()]})"
-
-def get_daily_quote():
-    """한국어 명언 API에서 랜덤 명언 추출"""
-    try:
-        resp = requests.get(
-            "https://korean-advice-open-api.vercel.app/api/advice",
-            timeout=10,
-            verify=False
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        message = data.get("message", "")
-        author = data.get("author", "")
-        profile = data.get("authorProfile", "")
-        if message and author:
-            if profile:
-                return f'"{message}" - {author} ({profile})'
-            return f'"{message}" - {author}'
-    except Exception:
-        pass
-    
-    try:
-        resp = requests.get(
-            "https://api.sobabear.com/happiness/random-quote",
-            timeout=10,
-            verify=False
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        quote_data = data.get("data", {})
-        content = quote_data.get("content", "")
-        author = quote_data.get("author", "")
-        if content and author:
-            return f'"{content}" - {author}'
-    except Exception:
-        pass
-    
-    return "추출 실패"
-
-def get_market_data():
-    """BTC, ETH 가격 및 코인마켓캡 실제 업데이트 시각 통합"""
-    btc_krw, btc_usd, eth_krw, eth_usd, fetch_time = "연결 실패", "연결 실패", "연결 실패", "연결 실패", "시간 미확인"
-    
-    if not CMC_API_KEY: 
-        return "📊 <b>오늘의 가격</b>\n⚠️ CMC_API_KEY 미설정\n\n"
-
-    try:
-        url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
-        headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY.strip()}
-        
-        res_k = requests.get(url, headers=headers, params={'symbol': 'BTC,ETH', 'convert': 'KRW'}, timeout=10, verify=False).json()
-        if 'data' in res_k:
-            btc_krw = f"{res_k['data']['BTC']['quote']['KRW']['price']:,.0f}"
-            eth_krw = f"{res_k['data']['ETH']['quote']['KRW']['price']:,.0f}"
-            dt_utc = datetime.strptime(res_k['data']['BTC']['quote']['KRW']['last_updated'], '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=pytz.utc)
-            fetch_time = dt_utc.astimezone(pytz.timezone('Asia/Seoul')).strftime('%H:%M')
-
-        res_u = requests.get(url, headers=headers, params={'symbol': 'BTC,ETH', 'convert': 'USD'}, timeout=10, verify=False).json()
-        if 'data' in res_u:
-            btc_usd = f"{round(res_u['data']['BTC']['quote']['USD']['price'] / 1000, 1)}K"
-            eth_usd = f"{round(res_u['data']['ETH']['quote']['USD']['price'] / 1000, 1)}K"
-    except Exception: pass
-
-    quote_text = get_daily_quote()
-
-    return (
-        f"📊 <b>오늘의 가격 : 코인마켓캡 {fetch_time} 기준</b>\n"
-        f"🟡 비트코인: ₩{btc_krw} ({btc_usd})\n"
-        f"⚪ 이더리움: ₩{eth_krw} ({eth_usd})\n"
-        f"💬 오늘의 명언 : {quote_text}\n\n"
-    )
 
 def is_duplicate(title, seen_title_sets):
     new_words = clean_text(title)
-    if not new_words: return False
+    if not new_words or len(new_words) < 3:
+        return False
     for seen_words in seen_title_sets:
-        if not seen_words: continue
+        if not seen_words or len(seen_words) < 3:
+            continue
         overlap = len(new_words & seen_words)
-        ratio_a = overlap / len(new_words)
-        ratio_b = overlap / len(seen_words)
-        if max(ratio_a, ratio_b) >= 0.25: return True
-        if overlap >= 2: return True
+        ratio = overlap / min(len(new_words), len(seen_words))
+        if ratio >= 0.6:
+            return True
     return False
 
-def is_low_quality_title(title):
-    """저품질 기사 제목 패턴 필터"""
+
+def is_low_quality(title):
     for pattern in LOW_QUALITY_PATTERNS:
         if re.search(pattern, title):
             return True
     return False
 
+
 def get_source_tier(source_name):
-    """매체 등급 반환: 1(주요) > 2(전문) > 3(기타)"""
     for name in TIER1_SOURCES:
         if name in source_name or source_name in name:
             return 1
@@ -175,279 +251,355 @@ def get_source_tier(source_name):
             return 2
     return 3
 
-def is_excluded_source(source_name, article_url):
-    """제외 대상 매체/URL 체크"""
-    for excluded in EXCLUDED_SOURCES:
-        if excluded in source_name or excluded in article_url:
-            return True
-    return False
 
-def format_pub_date_only(pub_date_str):
-    try:
-        dt = datetime.strptime(pub_date_str, '%a, %d %b %Y %H:%M:%S %Z')
-        kst = pytz.timezone('Asia/Seoul')
-        dt_kst = dt.replace(tzinfo=pytz.utc).astimezone(kst)
-        return dt_kst.strftime(f'%m/%d({DAYS_KR[dt_kst.weekday()]}) %H:%M'), dt_kst
-    except Exception: return "시간 확인 불가", None
+def get_topic(title):
+    """제목에서 토픽 분류 → (순서 인덱스, 토픽명)"""
+    title_lower = title.lower()
+    for idx, (topic_name, keywords) in enumerate(TOPIC_MAP):
+        for kw in keywords:
+            if kw.lower() in title_lower:
+                return idx, topic_name
+    return len(TOPIC_MAP), "기타"
 
 
-# ============================================================
-# Google News URL 디코딩 (외부 패키지 없이 자체 구현)
-# ============================================================
-
-def _decode_base64_url(article_id):
-    try:
-        padded = article_id + '=' * (4 - len(article_id) % 4) if len(article_id) % 4 else article_id
-        decoded = base64.urlsafe_b64decode(padded)
-        prefix = bytes([0x08, 0x13, 0x22])
-        if decoded.startswith(prefix):
-            decoded = decoded[len(prefix):]
-        length = decoded[0]
-        if length >= 0x80:
-            url_bytes = decoded[2:length+2]
-        else:
-            url_bytes = decoded[1:length+1]
-        url_str = url_bytes.decode('utf-8', errors='ignore')
-        if url_str.startswith('http'):
-            return url_str
-    except Exception:
-        pass
+def extract_company(title):
+    """제목에서 기업명 추출 (첫 번째 매칭)"""
+    for name in COMPANY_NAMES:
+        if name in title:
+            return name
     return None
 
-def _decode_via_batchexecute(article_id):
-    headers_common = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                       '(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-    }
-    signature, timestamp = None, None
-    for url_template in [
-        f"https://news.google.com/articles/{article_id}",
-        f"https://news.google.com/rss/articles/{article_id}",
-    ]:
-        try:
-            resp = requests.get(url_template, headers=headers_common, timeout=15, verify=False)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            div = soup.select_one('c-wiz > div[data-n-a-sg]')
-            if div:
-                signature = div.get('data-n-a-sg')
-                timestamp = div.get('data-n-a-ts')
-                break
-        except Exception:
-            continue
-    if not signature or not timestamp:
+
+# ============================================================
+# Groq API (Llama) — 최종 선별용
+# ============================================================
+
+LLM_PROMPT = """당신은 한국 가상자산 거래소(포블게이트)의 아침 뉴스 브리핑 에디터입니다.
+
+아래는 코드로 1차 선별된 가상자산/블록체인 뉴스 기사 목록입니다.
+각 기사는 [번호] (토픽) 제목 - 매체명 (발행일시) 형식입니다.
+
+이 중에서 아침 브리핑에 가장 적합한 기사를 20개 이상 골라주세요.
+
+## 편집 방향
+톤: **"디지털자산과 가상자산이 글로벌하게 제도권에 편입되고 있다"**는 긍정적 흐름
+
+### 선별 기준
+1. 국내 확정·통과된 정책 기사 우선 
+2. 월가·글로벌 금융기관의 가상자산 진입, ETF, 제도화 기사
+3. 비트코인·이더리움 의미있는 시장 분석 (단순 시세 나열 X)
+4. 단순 보도자료(XX사 OO 출시), 광고성 기사는 제외
+5. 블록체인·가상자산과 직접 관련 없는 기사는 절대 제외
+
+## 응답 형식
+JSON만 출력하세요. 다른 텍스트 없이.
+
+```json
+[1, 5, 12, 23, ...]
+```
+
+## 기사 목록
+{article_list}
+"""
+
+def _call_groq(prompt, max_retries=3):
+    if not GROQ_API_KEY:
+        print("[WARN] GROQ_API_KEY 미설정")
         return None
-    try:
-        payload = [
-            "Fbv4je",
-            f'["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,null,null,null,0,1],"X","X",1,[1,1,1],1,1,null,0,0,null,0],"{article_id}",{timestamp},"{signature}"]',
-        ]
-        req_headers = {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-            'User-Agent': headers_common['User-Agent'],
-        }
-        resp = requests.post(
-            'https://news.google.com/_/DotsSplashUi/data/batchexecute',
-            headers=req_headers,
-            data=f'f.req={quote(json.dumps([[payload]]))}',
-            timeout=15,
-            verify=False,
-        )
-        resp.raise_for_status()
-        parsed = json.loads(resp.text.split('\n\n')[1])[:-2]
-        decoded_url = json.loads(parsed[0][2])[1]
-        if decoded_url and decoded_url.startswith('http'):
-            return decoded_url
-    except Exception:
-        pass
-    return None
 
-def get_original_url(google_url):
-    try:
-        parsed = urlparse(google_url)
-        if parsed.hostname != 'news.google.com':
-            return google_url
-        path_parts = parsed.path.split('/')
-        article_id = None
-        for i, part in enumerate(path_parts):
-            if part in ('articles', 'read') and i + 1 < len(path_parts):
-                article_id = path_parts[i + 1]
-                break
-        if not article_id:
-            return google_url
-        if '?' in article_id:
-            article_id = article_id.split('?')[0]
-        direct_url = _decode_base64_url(article_id)
-        if direct_url:
-            return direct_url
-        api_url = _decode_via_batchexecute(article_id)
-        if api_url:
-            return api_url
-    except Exception:
-        pass
-    return google_url
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY.strip()}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 2048,
+    }
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=30, verify=False)
+            if resp.status_code == 429:
+                wait = attempt * 30
+                print(f"[WARN] Groq 429 — {wait}초 대기 ({attempt}/{max_retries})")
+                time.sleep(wait)
+                continue
+
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
+
+            json_match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+            if json_match:
+                text = json_match.group(1)
+            else:
+                json_match = re.search(r'\[.*\]', text, re.DOTALL)
+                if json_match:
+                    text = json_match.group(0)
+
+            return json.loads(text)
+        except Exception as e:
+            print(f"[ERROR] Groq 실패 (시도 {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                time.sleep(attempt * 10)
+
+    print("[ERROR] Groq 최종 실패")
+    return None
 
 
 # ============================================================
+# 유틸리티
+# ============================================================
+
+def get_korean_date():
+    tz = pytz.timezone('Asia/Seoul')
+    now = datetime.now(tz)
+    return f"{now.month}/{now.day}({DAYS_KR[now.weekday()]})"
+
+
+def get_daily_quote():
+    try:
+        resp = requests.get("https://korean-advice-open-api.vercel.app/api/advice", timeout=10, verify=False)
+        resp.raise_for_status()
+        data = resp.json()
+        message, author, profile = data.get("message", ""), data.get("author", ""), data.get("authorProfile", "")
+        if message and author:
+            return f'"{message}" - {author} ({profile})' if profile else f'"{message}" - {author}'
+    except Exception:
+        pass
+    try:
+        resp = requests.get("https://api.sobabear.com/happiness/random-quote", timeout=10, verify=False)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("data", {}).get("content", "")
+        author = data.get("data", {}).get("author", "")
+        if content and author:
+            return f'"{content}" - {author}'
+    except Exception:
+        pass
+    return "추출 실패"
+
+
+def get_market_data():
+    btc_krw, btc_usd, eth_krw, eth_usd, fetch_time = "연결 실패", "연결 실패", "연결 실패", "연결 실패", "시간 미확인"
+    if not CMC_API_KEY:
+        return "📊 <b>오늘의 가격</b>\n⚠️ CMC_API_KEY 미설정\n\n"
+    try:
+        api_url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+        headers = {'Accepts': 'application/json', 'X-CMC_PRO_API_KEY': CMC_API_KEY.strip()}
+
+        res_k = requests.get(api_url, headers=headers, params={'symbol': 'BTC,ETH', 'convert': 'KRW'}, timeout=10, verify=False).json()
+        if 'data' in res_k:
+            btc_krw = f"{res_k['data']['BTC']['quote']['KRW']['price']:,.0f}"
+            eth_krw = f"{res_k['data']['ETH']['quote']['KRW']['price']:,.0f}"
+            dt_utc = datetime.strptime(res_k['data']['BTC']['quote']['KRW']['last_updated'], '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=pytz.utc)
+            fetch_time = dt_utc.astimezone(pytz.timezone('Asia/Seoul')).strftime('%H:%M')
+
+        res_u = requests.get(api_url, headers=headers, params={'symbol': 'BTC,ETH', 'convert': 'USD'}, timeout=10, verify=False).json()
+        if 'data' in res_u:
+            btc_usd = f"{round(res_u['data']['BTC']['quote']['USD']['price'] / 1000, 1)}K"
+            eth_usd = f"{round(res_u['data']['ETH']['quote']['USD']['price'] / 1000, 1)}K"
+    except Exception:
+        pass
+
+    quote_text = get_daily_quote()
+    return (
+        f"📊 <b>오늘의 가격 : 코인마켓캡 {fetch_time} 기준</b>\n"
+        f"🟡 비트코인: ₩{btc_krw} ({btc_usd})\n"
+        f"⚪ 이더리움: ₩{eth_krw} ({eth_usd})\n\n"
+        f"💬 오늘의 명언 : {quote_text}\n"
+    )
+
+
+# ============================================================
+# 뉴스 수집 — 코드 필터링 → LLM 최종 선별
+# ============================================================
+
+TOPIC_ORDER = [t[0] for t in TOPIC_MAP] + ["기타"]
+
 
 def get_news():
-    """뉴스 수집 — 매체 품질 필터링 및 등급별 정렬 적용"""
     categories = {"자사 기사": [], "업계 전반": [], "파트너사 기사": []}
     global_seen_sets = []
-    
-    search_map = [
-        ("자사", MY_COMPANY_KEYWORDS, "자사 기사", False, 1),
-        ("가상자산", ["스테이블코인", "STO", "토큰증권", "가상자산", "디지털 자산",
-        "디지털자산법", "코인거래소", "가상자산 규제", "커스터디", "암호화폐","비트코인", "비트코인 현물 ETF", "비트코인 채굴"], "업계 전반", True, 20),
-    ]
+    now_kst = datetime.now(pytz.timezone('Asia/Seoul'))
 
-    # 파트너사: 회사별 검색 키워드 (각 회사당 최신 1개씩)
-    PARTNER_MAP = [
-        ("트래블룰 코드", ["트래블룰 솔루션 코드", "트래블룰 솔루션 CODE", "트래블룰 솔루션사 코드"]),
-        ("쟁글", ["쟁글"]),
-        ("체이널리시스", ["체이널리시스","chainalysis"]),
-        ("람다256", ["람다256"]),
-        ("DAXA", ["닥사", "DAXA"]),
-        ("한국핀테크산업협회", ["한국핀테크산업협회", "핀산협"]),
-    ]
-
-    EXCLUDE_KEYWORDS = ["업비트","두나무","빗썸","빗썸나눔","코인원","코빗","고팍스","스트리미"]
-
-    for label, keywords, cat_name, is_24h, limit in search_map:
-        query = " OR ".join(f'"{kw}"' for kw in keywords)
-        url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
-        if is_24h: url += "+when:1d"
-        
-        # 후보 기사를 먼저 모은 뒤, 등급순 정렬 후 limit개 선별
-        candidates = []
-        
-        try:
-            res = requests.get(url, verify=False, timeout=15)
-            items = BeautifulSoup(res.content, 'xml').find_all('item')
-            
-            for item in items:
-                title_raw = item.title.text
-                source_raw = item.source.text if item.source else "뉴스"
-                
-                # 1. 중복 체크
-                if is_duplicate(title_raw, global_seen_sets): continue
-
-                # 2. 제외 키워드 (타 거래소)
-                if any(kw in title_raw for kw in EXCLUDE_KEYWORDS): continue
-                
-                # 3. 저품질 제목 필터 (업계 전반만)
-                if cat_name == "업계 전반" and is_low_quality_title(title_raw): continue
-
-                # 4. 시간 필터
-                article_time_str, dt_kst = format_pub_date_only(item.pubDate.text if item.pubDate else "")
-                if cat_name == "업계 전반" and dt_kst:
-                    if (datetime.now(pytz.timezone('Asia/Seoul')) - dt_kst).total_seconds() > 172800:
-                        continue
-
-                # 5. 원본 URL 추출
-                original_url = get_original_url(item.link.text)
-
-                # 6. 제외 매체/URL 필터 (업계 전반만)
-                if cat_name == "업계 전반" and is_excluded_source(source_raw, original_url): continue
-                
-                # 7. 매체 등급 판정 (업계 전반만 등급 적용, 나머지는 동일 등급)
-                tier = get_source_tier(source_raw) if cat_name == "업계 전반" else 0
-                
-                # 제목 정리
-                clean_title = title_raw
-                if clean_title.endswith(f" - {source_raw}"):
-                    clean_title = clean_title[: -len(f" - {source_raw}")]
-                title = html.escape(clean_title)
-                source = html.escape(source_raw)
-                
-                formatted_item = f"▲ {title} - {source} ({article_time_str})\n{original_url}"
-                candidates.append((tier, formatted_item))
-                
-                global_seen_sets.append(clean_text(title_raw))
-                
-                time.sleep(0.3)
-        except Exception: pass
-        
-        # 등급순 정렬 (1순위 매체 먼저) 후 limit개 선별
-        candidates.sort(key=lambda x: x[0])
-        for _, formatted_item in candidates[:limit]:
-            categories[cat_name].append(formatted_item)
-    
     # ============================================================
-    # 파트너사 기사: 회사별 최신 1개씩 개별 검색
+    # 1. 자사 기사 (최신 1개)
+    # ============================================================
+    for kw in MY_COMPANY_KEYWORDS:
+        results = search_naver_news(kw, display=10, sort="date")
+        for r in results:
+            if is_duplicate(r["title_raw"], global_seen_sets):
+                continue
+            title = html_module.escape(r["title_raw"])
+            source = html_module.escape(r["source_raw"])
+            categories["자사 기사"].append(f"▲ {title} - {source} ({r['time_str']})\n{r['original_url']}")
+            global_seen_sets.append(clean_text(r["title_raw"]))
+            break
+        if categories["자사 기사"]:
+            break
+
+    print(f"[LOG] 자사 기사: {len(categories['자사 기사'])}건")
+
+    # ============================================================
+    # 2. 업계 전반 — 수집 → 코드 필터링 → LLM 최종 선별
+    # ============================================================
+    industry_queries = ["가상자산", "비트코인", "스테이블코인", "토큰증권", "디지털자산"]
+
+    # --- 2-1. 수집 ---
+    raw_all = []
+    for q in industry_queries:
+        results = search_naver_news(q, display=100, sort="date")
+        before = len(raw_all)
+        for r in results:
+            if any(kw in r["title_raw"] for kw in EXCLUDE_TITLE_KEYWORDS):
+                continue
+            if r["dt_kst"] and (now_kst - r["dt_kst"]).total_seconds() > 172800:
+                continue
+            if is_low_quality(r["title_raw"]):
+                continue
+            if is_duplicate(r["title_raw"], global_seen_sets):
+                continue
+            raw_all.append(r)
+            global_seen_sets.append(clean_text(r["title_raw"]))
+        print(f"[LOG] 수집 '{q}': {len(results)}건 → 신규 {len(raw_all)-before}건 (누적 {len(raw_all)}건)")
+        time.sleep(0.1)
+
+    print(f"[LOG] 수집 후 총: {len(raw_all)}건")
+
+    # --- 2-2. 코드 필터링: 토픽 분류 + 매체 등급 + 기업 중복 제한 ---
+    for r in raw_all:
+        r["topic_idx"], r["topic_name"] = get_topic(r["title_raw"])
+        r["tier"] = get_source_tier(r["source_raw"])
+
+    # 토픽순 → 매체등급순 → 최신순 정렬
+    raw_all.sort(key=lambda x: (
+        x["topic_idx"],
+        x["tier"],
+        -(x["dt_kst"].timestamp() if x["dt_kst"] else 0),
+    ))
+
+    # 같은 기업 최대 1개 제한
+    seen_companies = set()
+    filtered = []
+    for r in raw_all:
+        company = extract_company(r["title_raw"])
+        if company:
+            if company in seen_companies:
+                continue
+            seen_companies.add(company)
+        filtered.append(r)
+
+    print(f"[LOG] 코드 필터 후: {len(filtered)}건 (기업 중복 제거 {len(raw_all)-len(filtered)}건)")
+
+    # --- 2-3. LLM 최종 선별 (상위 60건만 전달) ---
+    llm_pool = filtered[:60]
+
+    if llm_pool:
+        article_list_text = "\n".join(
+            f"[{i+1}] ({c['topic_name']}) {c['title_raw']} - {c['source_raw']} ({c['time_str']})"
+            for i, c in enumerate(llm_pool)
+        )
+        print(f"[LOG] LLM에 전달: {len(llm_pool)}건")
+
+        llm_result = _call_groq(LLM_PROMPT.replace("{article_list}", article_list_text))
+
+        if llm_result and isinstance(llm_result, list):
+            # LLM이 [1, 5, 12, ...] 형태로 반환
+            selected_ids = [x for x in llm_result if isinstance(x, int) and 1 <= x <= len(llm_pool)]
+            print(f"[LOG] LLM 선택: {len(selected_ids)}건 → {selected_ids}")
+
+            for aid in selected_ids:
+                c = llm_pool[aid - 1]
+                title = html_module.escape(c["title_raw"])
+                source = html_module.escape(c["source_raw"])
+                categories["업계 전반"].append(f"▲ {title} - {source} ({c['time_str']})\n{c['original_url']}")
+        else:
+            # LLM 실패 → 코드 필터 결과 상위 20개 fallback
+            print("[WARN] LLM 실패 — 코드 필터 결과 상위 20건 fallback")
+            for c in filtered[:20]:
+                title = html_module.escape(c["title_raw"])
+                source = html_module.escape(c["source_raw"])
+                categories["업계 전반"].append(f"▲ {title} - {source} ({c['time_str']})\n{c['original_url']}")
+
+    print(f"[LOG] 업계 전반 최종: {len(categories['업계 전반'])}건")
+
+    # ============================================================
+    # 3. 파트너사 — 회사별 최신 기사 1개 (LLM 없이)
     # ============================================================
     for partner_name, partner_keywords in PARTNER_MAP:
-        query = " OR ".join(f'"{kw}"' for kw in partner_keywords)
-        url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
-        
-        found = False
-        try:
-            res = requests.get(url, verify=False, timeout=15)
-            items = BeautifulSoup(res.content, 'xml').find_all('item')
-            
-            for item in items:
-                if found: break
-                
-                title_raw = item.title.text
-                
-                article_time_str, dt_kst = format_pub_date_only(item.pubDate.text if item.pubDate else "")
-                original_url = get_original_url(item.link.text)
-                
-                source_raw = item.source.text if item.source else "뉴스"
-                clean_title = title_raw
-                if clean_title.endswith(f" - {source_raw}"):
-                    clean_title = clean_title[: -len(f" - {source_raw}")]
-                title = html.escape(clean_title)
-                source = html.escape(source_raw)
-                
-                formatted_item = f"▲ {title} - {source} ({article_time_str})\n{original_url}"
-                categories["파트너사 기사"].append(formatted_item)
-                
-                global_seen_sets.append(clean_text(title_raw))
-                found = True
-                
-                time.sleep(0.3)
-        except Exception: pass
-        
-        # 검색 결과가 없어도 무조건 1줄 출력
-        if not found:
+        best = None
+
+        for kw in partner_keywords:
+            results = search_naver_news(kw, display=50, sort="date")
+            for r in results:
+                # 최신 기사 갱신
+                if best is None:
+                    best = r
+                elif r["dt_kst"] and best["dt_kst"] and r["dt_kst"] > best["dt_kst"]:
+                    best = r
+            time.sleep(0.1)
+
+        if best:
+            title = html_module.escape(best["title_raw"])
+            source = html_module.escape(best["source_raw"])
+            categories["파트너사 기사"].append(f"▲ {title} - {source} ({best['time_str']})\n{best['original_url']}")
+        else:
             categories["파트너사 기사"].append(f"▲ {partner_name} - 최신 기사 없음")
 
+    print(f"[LOG] 파트너사 최종: {len(categories['파트너사 기사'])}건")
     return categories
+
+
+# ============================================================
+# 텔레그램 발송
+# ============================================================
 
 def send_telegram(market_data, categories):
     header = f"<b>[{get_korean_date()} 뉴스클리핑]</b>\n\n"
     messages, current_msg = [], header + market_data
     order = ["자사 기사", "파트너사 기사", "업계 전반"]
-    
+
     for cat_name in order:
         news_list = categories.get(cat_name)
-        if not news_list: continue
-        cat_header = f"<b>✅ {cat_name}</b>\n\n"
-        
+        if not news_list:
+            continue
+        cat_header = f"\n<b>✅ {cat_name}</b>\n\n"
+
         if len(current_msg) + len(cat_header) > 4000:
-            messages.append(current_msg); current_msg = "<b>(계속)</b>\n\n" + cat_header
-        else: current_msg += cat_header
+            messages.append(current_msg)
+            current_msg = "<b>(계속)</b>\n\n" + cat_header
+        else:
+            current_msg += cat_header
 
         for item in news_list:
             item_text = item + "\n\n\n"
             if len(current_msg) + len(item_text) > 4000:
-                messages.append(current_msg); current_msg = "<b>(계속)</b>\n\n" + item_text
-            else: current_msg += item_text
+                messages.append(current_msg)
+                current_msg = "<b>(계속)</b>\n\n" + item_text
+            else:
+                current_msg += item_text
 
-    if current_msg.strip(): messages.append(current_msg)
-    
-    if not TELEGRAM_TOKEN or not CHAT_ID: return
+    if current_msg.strip():
+        messages.append(current_msg)
+
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return
     send_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN.strip()}/sendMessage"
-    
+
     for msg in messages:
-        if msg.count("<b>") > msg.count("</b>"): msg += "</b>"
+        if msg.count("<b>") > msg.count("</b>"):
+            msg += "</b>"
         requests.post(send_url, json={
-            "chat_id": CHAT_ID.strip(), 
-            "text": msg, 
-            "parse_mode": "HTML", 
+            "chat_id": CHAT_ID.strip(),
+            "text": msg,
+            "parse_mode": "HTML",
             "disable_web_page_preview": True
         }, verify=False)
+
 
 if __name__ == "__main__":
     send_telegram(get_market_data(), get_news())

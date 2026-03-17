@@ -12,9 +12,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
 
-#TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-#CHAT_ID = os.environ.get('CHAT_ID')
-
 # 자사 관련 키워드
 MY_COMPANY_KEYWORDS = ["포블", "포블게이트", "FOBL"] 
 

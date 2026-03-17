@@ -2,7 +2,7 @@ name: Daily Crypto News Bot
 
 on:
   schedule:
-      - cron: '37 03 * * 0-4'
+      - cron: '43 03 * * 0-4'
     
   workflow_dispatch: # 이 줄이 있어야 'Run workflow' 버튼이 생깁니다.
 
@@ -26,4 +26,7 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           CMC_API_KEY: ${{ secrets.CMC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: python 0311.py

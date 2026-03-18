@@ -7,19 +7,15 @@ import html as html_module
 import re
 import json
 import time
-# ============================================================
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-# ============================================================
+from dotenv import load_dotenv
+
 # SSL 경고 무시
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================================
 # 환경변수
 # ============================================================
+load_dotenv()
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
 CMC_API_KEY = os.environ.get('CMC_API_KEY')
@@ -49,7 +45,7 @@ EXCLUDE_TITLE_KEYWORDS = [
     # 특정 자산
     "리플","XRP",
     # 특정 제목
-    "코인 갱신 일지", 
+    "코인 갱신 일지", "[크립토 브리핑]",
 ]
 
 # 저품질 기사 제목 패턴
@@ -65,9 +61,10 @@ LOW_QUALITY_PATTERNS = [
     r"시리즈\s*[A-D]",
     r"프리\s*시리즈",
     # 단순 가격 변동 기사
-    r"\d+%\s*(급등|급락|상승|하락|반등)",
+    r"급등|급락|상승|하락|반등|바닥|전망|목표가|원대",
+    r"\d+.*달러",
     r"\d+만\s*원\s*(돌파|붕괴|터치)",
-    r"\d+만\s*달러\s*(돌파|도달|가능)",
+    r"\d+%\s*(달러|급등|급락|상승|하락|반등|바닥|전망|목표가)",
     r"드디어\s*터졌다",
     r"동반\s*랠리",
     r"불장|떡상|폭등|폭락",
@@ -114,7 +111,7 @@ TOPIC_MAP = [
 # 기업명 — 같은 기업 기사 최대 1개 제한용
 COMPANY_NAMES = [
     "하나금융", "신한금융", "신한은행", "KB금융", "KB국민", "우리금융", "우리은행",
-    "NH농협", "카카오", "네이버", "삼성", "SK", "LG", "현대", "롯데",
+    "NH농협", "카카오", "네이버", "삼성", "SK", "LG", "현대", "롯데", "유안타증권",
     # "바이낸스", "코인베이스", "블랙록", "마이크로스트래티지", "스트래티지",
     # "리플", "테더", "서클", "비자", "마스터카드",
 ]
@@ -127,6 +124,7 @@ PARTNER_MAP = [
     ("람다256", ["람다256"]),
     ("DAXA", ["닥사", "DAXA", "디지털자산거래소공동협의체"]),
     ("한국핀테크산업협회", ["한국핀테크산업협회", "핀산협"]),
+    ("코넛", ["대체불가능회사","코넛","코넛코인","코넛 코인","CONUT"]),
 ]
 
 # ============================================================
@@ -558,13 +556,12 @@ def get_news():
         best = None
 
         for kw in partner_keywords:
-            # 최신순 + 관련도순 둘 다 검색해서 합치기
             for sort_type in ["date", "sim"]:
                 results = search_naver_news(kw, display=100, sort=sort_type)
                 for r in results:
-                    # 제목에 키워드가 포함된 기사만 후보
                     title_no_tag = re.sub(r'^\[.*?\]\s*', '', r["title_raw"].strip()).lower()
-                    if not title_no_tag.startswith(kw.lower()):
+                    subject = title_no_tag.split(",")[0]   # ← 첫 쉼표 앞 = 주어
+                    if kw.lower() not in subject:           # ← 주어에 키워드 포함 여부
                         continue
                     if best is None:
                         best = r
@@ -579,7 +576,6 @@ def get_news():
         else:
             categories["파트너사 기사"].append(f"▲ {partner_name} - 최신 기사 없음")
 
-    print(f"[LOG] 파트너사 최종: {len(categories['파트너사 기사'])}건")
     return categories
 
 # ============================================================

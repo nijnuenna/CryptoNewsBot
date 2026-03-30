@@ -1,26 +1,23 @@
 name: Daily Crypto News Bot
-
 on:
   schedule:
       - cron: '50 22 * * 0-4'
     
-  workflow_dispatch: # 이 줄이 있어야 'Run workflow' 버튼이 생깁니다.
-
+  workflow_dispatch:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Run script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -30,3 +27,10 @@ jobs:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: python 0311.py
+      - name: Commit quote history
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add used_quotes.txt
+          git diff --cached --quiet || git commit -m "update used quotes"
+          git push

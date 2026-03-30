@@ -392,26 +392,51 @@ def get_korean_date():
 
 
 def get_daily_quote():
+    """이전에 사용된 명언과 중복되지 않는 명언 추출"""
+    QUOTE_FILE = "used_quotes.txt"
+    
+    # 기존 기록 읽기
+    used = set()
     try:
-        resp = requests.get("https://korean-advice-open-api.vercel.app/api/advice", timeout=10, verify=False)
-        resp.raise_for_status()
-        data = resp.json()
-        message, author, profile = data.get("message", ""), data.get("author", ""), data.get("authorProfile", "")
-        if message and author:
-            return f'"{message}" - {author} ({profile})' if profile else f'"{message}" - {author}'
-    except Exception:
+        with open(QUOTE_FILE, "r", encoding="utf-8") as f:
+            used = set(line.strip() for line in f if line.strip())
+    except FileNotFoundError:
         pass
-    try:
-        resp = requests.get("https://api.sobabear.com/happiness/random-quote", timeout=10, verify=False)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data.get("data", {}).get("content", "")
-        author = data.get("data", {}).get("author", "")
-        if content and author:
-            return f'"{content}" - {author}'
-    except Exception:
-        pass
-    return "추출 실패"
+
+    # API 여러 번 호출해서 후보 수집
+    candidates = []
+    for _ in range(10):
+        try:
+            resp = requests.get(
+                "https://korean-advice-open-api.vercel.app/api/advice",
+                timeout=10, verify=False
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            message = data.get("message", "")
+            author = data.get("author", "")
+            profile = data.get("authorProfile", "")
+            if message and author:
+                text = f'{message} - {author} - {profile}' if profile else f'{message} - {author}'
+                if text not in candidates:
+                    candidates.append(text)
+        except Exception:
+            pass
+        time.sleep(0.3)
+
+    # 기록에 없는 명언 우선 선택
+    new_quotes = [q for q in candidates if q not in used]
+    selected = new_quotes[0] if new_quotes else (candidates[0] if candidates else "추출 실패")
+
+    # 기록에 추가
+    if selected != "추출 실패":
+        try:
+            with open(QUOTE_FILE, "a", encoding="utf-8") as f:
+                f.write(selected + "\n")
+        except Exception:
+            pass
+
+    return selected
 
 
 def get_market_data():

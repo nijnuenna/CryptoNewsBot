@@ -1,7 +1,7 @@
 name: Daily Market Price Bot
 on:
   schedule:
-    - cron: '50 8 * * *'    # UTC 09:00 = KST 18:00, 매일
+    - cron: '50 7 * * *'    # UTC 09:00 = KST 18:00, 매일
 
 jobs:
   run-bot:

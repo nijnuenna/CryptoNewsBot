@@ -2,7 +2,6 @@ name: Daily Market Price Bot
 on:
   schedule:
     - cron: '50 8 * * *'    # UTC 09:00 = KST 18:00, 매일
-  workflow_dispatch:          # 수동 실행도 가능하게
 
 jobs:
   run-bot:

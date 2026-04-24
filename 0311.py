@@ -30,12 +30,6 @@ NAVER_CLIENT_SECRET = os.environ.get('NAVER_CLIENT_SECRET')
 DAYS_KR = ['월', '화', '수', '목', '금', '토', '일']
 
 # ============================================================
-# 날짜 컷오프 설정
-# ============================================================
-OWN_COMPANY_MAX_DAYS = 30      # 자사 기사: 30일 이내만
-PARTNER_MAX_DAYS = 60          # 파트너사: 60일 이내만 (소식 빈도 낮음)
-
-# ============================================================
 # 키워드 / 필터 설정
 # ============================================================
 
@@ -52,37 +46,24 @@ EXCLUDE_TITLE_KEYWORDS = [
     "코인 갱신 일지", "[크립토 브리핑]",
 ]
 
-# 가격·변동 중심, 감성 과장, 광고성 등 '산업 흐름과 무관한' 제목 패턴
 LOW_QUALITY_PATTERNS = [
-    # 가격 변동 중심
-    r"(급등|급락|폭등|폭락)",
-    r"\d+\s*%\s*(상승|하락|반등|급등|급락)",
-    r"\d+\s*만\s*원.*(돌파|붕괴|터치|회복)",
-    r"\d+\s*(만|천)?\s*달러.*(돌파|붕괴|회복)",
-    r"목표가",
-    r"(바닥|저점)\s*(다졌|찍|탈출|확인)",
-
-    # 실시간 시세
-    r"오늘\s*시세",
-    r"실시간\s*(시세|가격)",
-    r"^(코인|가상자산)\s*시세",
     r"^비트코인\s*\d+만\s*원",
-
-    # 감성·과장
-    r"(드디어|마침내).*(터졌|돌파|날았)",
-    r"동반\s*랠리",
-    r"불장|떡상",
-    r"투심\s*살아",
-
-    # 광고·속보·초기 투자 보도자료
+    r"오늘\s*시세",
     r"^\[속보\]",
+    r"^(코인|가상자산)\s*시세",
+    r"실시간\s*(시세|가격)",
     r"^\[광고\]",
     r"^\[후원\]",
     r"시드\s*라운드",
     r"시리즈\s*[A-D]",
     r"프리\s*시리즈",
-    r"코인\s*갱신\s*일지",
-    r"\[크립토\s*브리핑\]",
+    r"급등|급락|상승|하락|반등|바닥|전망|목표가|원대",
+    r"\d+.*달러",
+    r"\d+만\s*원\s*(돌파|붕괴|터치)",
+    r"\d+%\s*(달러|급등|급락|상승|하락|반등|바닥|전망|목표가)",
+    r"드디어\s*터졌다",
+    r"동반\s*랠리",
+    r"불장|떡상|폭등|폭락",
 ]
 
 EXCLUDED_DOMAINS = [
@@ -243,14 +224,6 @@ def _extract_source(url):
 # 코드 기반 필터링 함수
 # ============================================================
 
-def _within_days(dt_kst, days):
-    """dt_kst가 현재 기준 days일 이내인지"""
-    if not dt_kst:
-        return False
-    now_kst = datetime.now(pytz.timezone('Asia/Seoul'))
-    return (now_kst - dt_kst).days <= days
-
-
 def clean_text(text):
     text = re.sub(r'\[.*?\]|\(.*?\)', '', text)
     text = re.sub(r'[^가-힣a-zA-Z0-9\s]', ' ', text)
@@ -323,53 +296,38 @@ def _title_has_keyword(title, kw):
 # Groq API (Llama) — 최종 선별용
 # ============================================================
 
-LLM_PROMPT = """당신은 한국 가상자산 거래소 '포블게이트'의 아침 뉴스 브리핑 에디터입니다.
-거래소 임직원이 출근길에 읽을 10~15분짜리 브리핑을 편집하는 것이 목표입니다.
+LLM_PROMPT = """당신은 한국 가상자산 거래소의 아침 뉴스 브리핑 에디터입니다.
 
-## 입력
-아래 목록은 코드로 1차 필터링된 가상자산·블록체인 관련 기사입니다.
-형식: [번호] (토픽) 제목 - 매체명 (발행일시)
+아래는 코드로 1차 선별된 뉴스 기사 목록입니다.
+각 기사는 [번호] (토픽) 제목 - 매체명 (발행일시) 형식입니다.
 
-## 당신의 임무
-후보 기사 중 **진짜 의미있는 기사 15~20건**을 엄선합니다.
-핵심 역할은 코드가 걸러내지 못한 **저품질·중복·피상적 기사를 배제**하는 것입니다.
-애매하면 배제가 기본값입니다. 15건이 안 되더라도 품질이 우선입니다.
+## 당신의 역할
+1차 필터를 통과한 기사 중에서 "진짜 의미있는 기사" 20개 이상 엄선하세요.
+코드가 걸러내지 못한 저품질 기사를 걸러내는 것이 당신의 핵심 역할입니다.
 
-## 편집 철학
-"디지털자산·가상자산이 글로벌하게 제도권에 편입되는 과정"을 잘 드러내는 기사를 우선합니다.
-임직원이 산업 전반의 흐름·정책·제도 변화를 한 번에 파악할 수 있어야 합니다.
+## 편집 방향
+"디지털자산과 가상자산이 글로벌하게 제도권에 편입되고 있다"는 긍정적 흐름을 보여주는 기사를 우선하세요.
 
-## 반드시 선택 (우선순위순)
-1. 국내 정책·규제 확정 기사 (법안 통과, 시행령 확정, 금융당국·국회 공식 발표)
-2. 글로벌 제도권 편입 (ETF 승인, 월가·블랙록·JP모건 등 대형 금융사 진입)
-3. 스테이블코인·STO·RWA·토큰증권 제도화 진전
-4. 주요 기업의 디지털자산 사업 전략 (하나·신한·KB·네이버·카카오·삼성 등)
-5. 비트코인·이더리움 심층 분석 (시세가 아닌 배경·맥락·구조 분석)
+## 반드시 선택해야 하는 기사 (우선순위순)
+1. 국내 정책이 확정·통과·시행된 기사 (법안 통과, 시행령 확정 등)
+2. 글로벌 금융기관(월가, 블랙록, JP모건 등)이 가상자산에 진입하는 기사
+3. ETF 승인, 기관 투자, 대형 금융사의 디지털자산 사업 확장
+4. 스테이블코인, STO, 토큰증권의 제도화 진전
+5. 비트코인·이더리움에 대한 깊이 있는 분석 기사 (원인·배경·맥락 포함)
 
-## 반드시 제외 (하나라도 해당하면 배제)
-- **가격 중심**: "X% 급등/급락", "X만원/달러 돌파", 목표가, 차트·기술적 분석, 시황 요약
-- **중복 기사**: 같은 사건을 여러 매체가 다루면 **매체 등급이 높은 1개만** 선택
-- **소규모 보도자료**: 작은 회사·프로젝트의 단순 출시·MOU·업무협약·리브랜딩
-- **인물 이벤트**: "XX 대표/CEO 출연/강연/인터뷰", 개인의 컨퍼런스 발언
-- **추측·전망성 단독 기사**: "~될 수도", "~가능성", "~우려", "~지연되나", 전문가 개인 예상
-- **비관련 기사**: 블록체인과 직접 관련 없는 AI·일반 핀테크·부동산·증권 일반
-- **분위기만 전하는 기사**: "투심 살아나", "회복세", "심리 개선", "관망세"
-- **특정 알트코인 시세·가격 전망** 기사
-
-## 중복 판단 기준
-제목의 핵심 명사·동사가 겹치면 중복으로 판단합니다. 표현이 달라도 같은 사건이면 1개만.
-예시)
-- "비트코인 10만달러 돌파" vs "BTC 10만불 시대" → 동일 이슈, 매체 등급 높은 1개
-- "금융위 가상자산 법안 발표" vs "金委, 디지털자산법 공개" → 동일 이슈, 1개
-매체 등급이 같으면 더 구체적·심층적인 제목을 선택하세요.
-
-## 토픽 균형
-가능하면 여러 토픽에 걸쳐 골고루 선택하세요. 한 토픽이 전체의 절반을 넘지 않도록 합니다.
-단, 정책·규제 기사는 예외적으로 많이 담아도 괜찮습니다.
+## 반드시 제외해야 하는 기사 (하나라도 해당하면 제외)
+- 가격만 전하는 기사: "X% 급등", "X만원 돌파", "랠리", "반등", "바닥", 목표가 전망
+- 같은 이슈를 다른 매체가 보도한 중복 기사: 제목이 비슷하면 매체 등급이 높은 1개만
+- 소규모 기업의 투자 유치, MOU, 서비스 출시 같은 단순 보도자료
+- 인물 중심 기사: "XX 대표 출연", "XX CEO 인터뷰", 컨퍼런스 발언 인용
+- 블록체인·가상자산과 직접 관련 없는 기사 (AI, 핀테크, 일반 금융, 부동산 등)
+- 추측성 기사: "~될 수도", "~가능성", "~전망", "~지연되나"
 
 ## 응답 형식
-JSON 배열만 출력. 설명·코드펜스·추가 텍스트 일절 없음.
-[1, 5, 12, 23, 45]
+JSON 배열만 출력. 다른 텍스트 절대 없이.
+```json
+[1, 5, 12, 23, ...]
+```
 
 ## 기사 목록
 {article_list}
@@ -437,7 +395,7 @@ def get_korean_date():
 def get_daily_quote():
     """이전에 사용된 명언과 중복되지 않는 명언 추출"""
     QUOTE_FILE = "used_quotes.txt"
-
+    
     # 기존 기록 읽기
     used = set()
     try:
@@ -512,6 +470,7 @@ def get_market_data():
         f"💬 오늘의 명언 : {quote_text}\n"
     )
 
+
 # ============================================================
 # 뉴스 수집 — 코드 필터링 → LLM 최종 선별
 # ============================================================
@@ -526,17 +485,15 @@ def get_news():
     yesterday_noon = (now_kst - timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
 
     # ============================================================
-    # 1. 자사 기사 — 최근 N일 이내 + 최신순 우선
+    # 1. 자사 기사 (제목에 키워드 포함 + 최신순 우선, 동일 날짜면 매체등급)
     # ============================================================
     my_candidates = []
     for kw in MY_COMPANY_KEYWORDS:
         for sort_type in ["date", "sim"]:
             results = search_naver_news(kw, display=100, sort=sort_type)
             for r in results:
+                # 제목에 키워드가 주어 위치에 있는 기사만
                 if not _title_has_keyword(r["title_raw"], kw):
-                    continue
-                # 날짜 컷오프: 너무 오래된 기사는 배제
-                if not _within_days(r["dt_kst"], OWN_COMPANY_MAX_DAYS):
                     continue
                 if is_duplicate(r["title_raw"], [clean_text(c["title_raw"]) for c in my_candidates]):
                     continue
@@ -545,28 +502,23 @@ def get_news():
         time.sleep(0.1)
 
     if my_candidates:
-        # 정렬: 최신순 우선(1차) → 동일 날짜면 매체 등급(2차)
+        # 최신순 우선 → 같은 날이면 매체등급순
         my_candidates.sort(key=lambda x: (
-            -(x["dt_kst"].timestamp() if x["dt_kst"] else 0),
             x["tier"],
+            -(x["dt_kst"].timestamp() if x["dt_kst"] else 0),
         ))
         r = my_candidates[0]
         title = html_module.escape(r["title_raw"])
         source = html_module.escape(r["source_raw"])
         categories["자사 기사"].append(f"▲ {title} - {source} ({r['time_str']})\n{r['original_url']}")
         global_seen_sets.append(clean_text(r["title_raw"]))
-    else:
-        categories["자사 기사"].append(f"▲ 포블게이트 - 최근 {OWN_COMPANY_MAX_DAYS}일 내 기사 없음")
 
-    print(f"[LOG] 자사 기사: {len(categories['자사 기사'])}건 (후보 {len(my_candidates)}건)")
+    print(f"[LOG] 자사 기사: {len(categories['자사 기사'])}건")
 
     # ============================================================
     # 2. 업계 전반 — 수집 → 코드 필터링 → LLM 최종 선별
     # ============================================================
-    industry_queries = [
-        "가상자산", "비트코인", "스테이블코인", "토큰증권", "디지털자산",
-        "가상자산 규제", "블록체인 금융", "RWA 토큰화",
-    ]
+    industry_queries = ["가상자산", "비트코인", "스테이블코인", "토큰증권", "디지털자산"]
 
     raw_all = []
     for q in industry_queries:
@@ -611,8 +563,7 @@ def get_news():
 
     print(f"[LOG] 코드 필터 후: {len(filtered)}건 (기업 중복 제거 {len(raw_all)-len(filtered)}건)")
 
-    # LLM에 전달할 풀 확대 (60 → 80): 선택지 넓혀서 LLM이 더 좋은 기사 고르게
-    llm_pool = filtered[:80]
+    llm_pool = filtered[:60]
 
     if llm_pool:
         article_list_text = "\n".join(
@@ -627,15 +578,8 @@ def get_news():
             selected_ids = [x for x in llm_result if isinstance(x, int) and 1 <= x <= len(llm_pool)]
             print(f"[LOG] LLM 선택: {len(selected_ids)}건 → {selected_ids}")
 
-            # 토픽·매체 순으로 재정렬해서 읽기 좋게
-            selected_items = [llm_pool[aid - 1] for aid in selected_ids]
-            selected_items.sort(key=lambda x: (
-                x["topic_idx"],
-                x["tier"],
-                -(x["dt_kst"].timestamp() if x["dt_kst"] else 0),
-            ))
-
-            for c in selected_items:
+            for aid in selected_ids:
+                c = llm_pool[aid - 1]
                 title = html_module.escape(c["title_raw"])
                 source = html_module.escape(c["source_raw"])
                 categories["업계 전반"].append(f"▲ {title} - {source} ({c['time_str']})\n{c['original_url']}")
@@ -649,7 +593,7 @@ def get_news():
     print(f"[LOG] 업계 전반 최종: {len(categories['업계 전반'])}건")
 
     # ============================================================
-    # 3. 파트너사 — 회사별 최근 N일 이내 최신 기사 1개
+    # 3. 파트너사 — 회사별 최신 기사 1개 (제목에 키워드가 주어 위치)
     # ============================================================
     for partner_name, partner_keywords in PARTNER_MAP:
         best = None
@@ -659,9 +603,6 @@ def get_news():
                 results = search_naver_news(kw, display=100, sort=sort_type)
                 for r in results:
                     if not _title_has_keyword(r["title_raw"], kw):
-                        continue
-                    # 날짜 컷오프: 너무 오래된 기사는 배제
-                    if not _within_days(r["dt_kst"], PARTNER_MAX_DAYS):
                         continue
                     if best is None:
                         best = r
@@ -674,7 +615,7 @@ def get_news():
             source = html_module.escape(best["source_raw"])
             categories["파트너사 기사"].append(f"▲ {title} - {source} ({best['time_str']})\n{best['original_url']}")
         else:
-            categories["파트너사 기사"].append(f"▲ {partner_name} - 최근 {PARTNER_MAX_DAYS}일 내 기사 없음")
+            categories["파트너사 기사"].append(f"▲ {partner_name} - 최신 기사 없음")
 
     print(f"[LOG] 파트너사 최종: {len(categories['파트너사 기사'])}건")
     return categories
